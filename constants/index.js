@@ -1,5 +1,5 @@
 // Address of the Whitelist Contract that you deployed
-const WHITELIST_CONTRACT_ADDRESS = "0x862B7a6DE5Fa22Fc7d9F2c3b5815fEAfCc59f8B9";
+const WHITELIST_CONTRACT_ADDRESS = "0x100FE4F4aA6fD27615d4E6839AbD140F5391835F";
 // URL to extract Metadata for a Crypto Dev NFT
 const METADATA_URL = "http://localhost:3000/api/";
 
