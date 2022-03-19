@@ -263,7 +263,10 @@ export default function Home() {
       connectWallet();
 
       // Check if presale has started and ended
-      const _presaleStarted = checkIfPresaleStarted();
+      const _presaleStarted = checkIfPresaleStarted().then((res) => {
+        console.log(res);
+      });
+      console.log("fdfs");
       if (_presaleStarted) {
         checkIfPresaleEnded();
       }
