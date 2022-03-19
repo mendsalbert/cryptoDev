@@ -5,6 +5,7 @@ import { Web3Provider } from "@ethersproject/providers";
 import { useEffect, useRef, useState } from "react";
 import Web3Modal from "web3modal";
 import { useViewerConnection } from "@self.id/react";
+import { EthereumAuthProvider } from "@self.id/web";
 export default function Home() {
   const web3ModalRef = useRef();
   const [connection, connect, disconnect] = useViewerConnection();
@@ -23,6 +24,18 @@ export default function Home() {
       });
     }
   }, [connection.status]);
+
+  const connectToSelfID = async () => {
+    const ethereumAuthProvider = await getEthereumAuthProvider();
+    connect(ethereumAuthProvider);
+  };
+
+  const getEthereumAuthProvider = async () => {
+    const wrappedProvider = await getProvider();
+    const signer = wrappedProvider.getSigner();
+    const address = await signer.getAddress();
+    return new EthereumAuthProvider(wrappedProvider.provider, address);
+  };
 
   return (
     <div className={styles.container}>
