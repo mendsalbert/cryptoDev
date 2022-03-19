@@ -1,222 +1,181 @@
-import { BigNumber, Contract, providers, utils } from "ethers";
+import { Contract, providers } from "ethers";
+import { formatEther } from "ethers/lib/utils";
 import Head from "next/head";
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Web3Modal from "web3modal";
 import {
-  NFT_CONTRACT_ABI,
-  NFT_CONTRACT_ADDRESS,
-  TOKEN_CONTRACT_ABI,
-  TOKEN_CONTRACT_ADDRESS,
+  CRYPTODEVS_DAO_ABI,
+  CRYPTODEVS_DAO_CONTRACT_ADDRESS,
+  CRYPTODEVS_NFT_ABI,
+  CRYPTODEVS_NFT_CONTRACT_ADDRESS,
 } from "../constants";
 import styles from "../styles/Home.module.css";
 
 export default function Home() {
-  // Create a BigNumber `0`
-  const zero = BigNumber.from(0);
-  // walletConnected keeps track of whether the user's wallet is connected or not
-  const [walletConnected, setWalletConnected] = useState(false);
-  // loading is set to true when we are waiting for a transaction to get mined
+  // ETH Balance of the DAO contract
+  const [treasuryBalance, setTreasuryBalance] = useState("0");
+  // Number of proposals created in the DAO
+  const [numProposals, setNumProposals] = useState("0");
+  // Array of all proposals created in the DAO
+  const [proposals, setProposals] = useState([]);
+  // User's balance of CryptoDevs NFTs
+  const [nftBalance, setNftBalance] = useState(0);
+  // Fake NFT Token ID to purchase. Used when creating a proposal.
+  const [fakeNftTokenId, setFakeNftTokenId] = useState("");
+  // One of "Create Proposal" or "View Proposals"
+  const [selectedTab, setSelectedTab] = useState("");
+  // True if waiting for a transaction to be mined, false otherwise.
   const [loading, setLoading] = useState(false);
-  // tokensToBeClaimed keeps track of the number of tokens that can be claimed
-  // based on the Crypto Dev NFT's held by the user for which they havent claimed the tokens
-  const [tokensToBeClaimed, setTokensToBeClaimed] = useState(zero);
-  // balanceOfCryptoDevTokens keeps track of number of Crypto Dev tokens owned by an address
-  const [balanceOfCryptoDevTokens, setBalanceOfCryptoDevTokens] =
-    useState(zero);
-  // amount of the tokens that the user wants to mint
-  const [tokenAmount, setTokenAmount] = useState(zero);
-  // tokensMinted is the total number of tokens that have been minted till now out of 10000(max total supply)
-  const [tokensMinted, setTokensMinted] = useState(zero);
-  // Create a reference to the Web3 Modal (used for connecting to Metamask) which persists as long as the page is open
+  // True if user has connected their wallet, false otherwise
+  const [walletConnected, setWalletConnected] = useState(false);
   const web3ModalRef = useRef();
 
-  /**
-   * getTokensToBeClaimed: checks the balance of tokens that can be claimed by the user
-   */
-  const getTokensToBeClaimed = async () => {
+  // Helper function to connect wallet
+  const connectWallet = async () => {
     try {
-      // Get the provider from web3Modal, which in our case is MetaMask
-      // No need for the Signer here, as we are only reading state from the blockchain
+      await getProviderOrSigner();
+      setWalletConnected(true);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  // Reads the ETH balance of the DAO contract and sets the `treasuryBalance` state variable
+  const getDAOTreasuryBalance = async () => {
+    try {
       const provider = await getProviderOrSigner();
-      // Create an instance of NFT Contract
-      const nftContract = new Contract(
-        NFT_CONTRACT_ADDRESS,
-        NFT_CONTRACT_ABI,
-        provider
+      const balance = await provider.getBalance(
+        CRYPTODEVS_DAO_CONTRACT_ADDRESS
       );
-      // Create an instance of tokenContract
-      const tokenContract = new Contract(
-        TOKEN_CONTRACT_ADDRESS,
-        TOKEN_CONTRACT_ABI,
-        provider
-      );
-      // We will get the signer now to extract the address of the currently connected MetaMask account
+      setTreasuryBalance(balance.toString());
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  // Reads the number of proposals in the DAO contract and sets the `numProposals` state variable
+  const getNumProposalsInDAO = async () => {
+    try {
+      const provider = await getProviderOrSigner();
+      const contract = getDaoContractInstance(provider);
+      const daoNumProposals = await contract.numProposals();
+      setNumProposals(daoNumProposals.toString());
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  // Reads the balance of the user's CryptoDevs NFTs and sets the `nftBalance` state variable
+  const getUserNFTBalance = async () => {
+    try {
       const signer = await getProviderOrSigner(true);
-      // Get the address associated to the signer which is connected to  MetaMask
-      const address = await signer.getAddress();
-      // call the balanceOf from the NFT contract to get the number of NFT's held by the user
-      const balance = await nftContract.balanceOf(address);
-      // balance is a Big number and thus we would compare it with Big number `zero`
-      if (balance === zero) {
-        setTokensToBeClaimed(zero);
-      } else {
-        // amount keeps track of the number of unclaimed tokens
-        var amount = 0;
-        // For all the NFT's, check if the tokens have already been claimed
-        // Only increase the amount if the tokens have not been claimed
-        // for a an NFT(for a given tokenId)
-        for (var i = 0; i < balance; i++) {
-          const tokenId = await nftContract.tokenOfOwnerByIndex(address, i);
-          const claimed = await tokenContract.tokenIdsClaimed(tokenId);
-          if (!claimed) {
-            amount++;
-          }
-        }
-        //tokensToBeClaimed has been initialized to a Big Number, thus we would convert amount
-        // to a big number and then set its value
-        setTokensToBeClaimed(BigNumber.from(amount));
+      const nftContract = getCryptodevsNFTContractInstance(signer);
+      const balance = await nftContract.balanceOf(signer.getAddress());
+      setNftBalance(parseInt(balance.toString()));
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  // Calls the `createProposal` function in the contract, using the tokenId from `fakeNftTokenId`
+  const createProposal = async () => {
+    try {
+      const signer = await getProviderOrSigner(true);
+      const daoContract = getDaoContractInstance(signer);
+      const txn = await daoContract.createProposal(fakeNftTokenId);
+      setLoading(true);
+      await txn.wait();
+      await getNumProposalsInDAO();
+      setLoading(false);
+    } catch (error) {
+      console.error(error);
+      window.alert(error.data.message);
+    }
+  };
+
+  // Helper function to fetch and parse one proposal from the DAO contract
+  // Given the Proposal ID
+  // and converts the returned data into a Javascript object with values we can use
+  const fetchProposalById = async (id) => {
+    try {
+      const provider = await getProviderOrSigner();
+      const daoContract = getDaoContractInstance(provider);
+      const proposal = await daoContract.proposals(id);
+      const parsedProposal = {
+        proposalId: id,
+        nftTokenId: proposal.nftTokenId.toString(),
+        deadline: new Date(parseInt(proposal.deadline.toString()) * 1000),
+        yayVotes: proposal.yayVotes.toString(),
+        nayVotes: proposal.nayVotes.toString(),
+        executed: proposal.executed,
+      };
+      return parsedProposal;
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  // Runs a loop `numProposals` times to fetch all proposals in the DAO
+  // and sets the `proposals` state variable
+  const fetchAllProposals = async () => {
+    try {
+      const proposals = [];
+      for (let i = 0; i < numProposals; i++) {
+        const proposal = await fetchProposalById(i);
+        proposals.push(proposal);
       }
-    } catch (err) {
-      console.error(err);
-      setTokensToBeClaimed(zero);
+      setProposals(proposals);
+      return proposals;
+    } catch (error) {
+      console.error(error);
     }
   };
 
-  /**
-   * getBalanceOfCryptoDevTokens: checks the balance of Crypto Dev Tokens's held by an address
-   */
-  const getBalanceOfCryptoDevTokens = async () => {
+  // Calls the `voteOnProposal` function in the contract, using the passed
+  // proposal ID and Vote
+  const voteOnProposal = async (proposalId, _vote) => {
     try {
-      // Get the provider from web3Modal, which in our case is MetaMask
-      // No need for the Signer here, as we are only reading state from the blockchain
-      const provider = await getProviderOrSigner();
-      // Create an instace of token contract
-      const tokenContract = new Contract(
-        TOKEN_CONTRACT_ADDRESS,
-        TOKEN_CONTRACT_ABI,
-        provider
-      );
-      // We will get the signer now to extract the address of the currently connected MetaMask account
       const signer = await getProviderOrSigner(true);
-      // Get the address associated to the signer which is connected to  MetaMask
-      const address = await signer.getAddress();
-      // call the balanceOf from the token contract to get the number of tokens held by the user
-      const balance = await tokenContract.balanceOf(address);
-      // balance is already a big number, so we dont need to convert it before setting it
-      setBalanceOfCryptoDevTokens(balance);
-    } catch (err) {
-      console.error(err);
-      setBalanceOfCryptoDevTokens(zero);
-    }
-  };
+      const daoContract = getDaoContractInstance(signer);
 
-  /**
-   * mintCryptoDevToken: mints `amount` number of tokens to a given address
-   */
-  const mintCryptoDevToken = async (amount) => {
-    try {
-      // We need a Signer here since this is a 'write' transaction.
-      // Create an instance of tokenContract
-      const signer = await getProviderOrSigner(true);
-      // Create an instance of tokenContract
-      const tokenContract = new Contract(
-        TOKEN_CONTRACT_ADDRESS,
-        TOKEN_CONTRACT_ABI,
-        signer
-      );
-      // Each token is of `0.001 ether`. The value we need to send is `0.001 * amount`
-      const value = 0.001 * amount;
-      const tx = await tokenContract.mint(amount, {
-        // value signifies the cost of one crypto dev token which is "0.001" eth.
-        // We are parsing `0.001` string to ether using the utils library from ethers.js
-        value: utils.parseEther(value.toString()),
-      });
+      let vote = _vote === "YAY" ? 0 : 1;
+      const txn = await daoContract.voteOnProposal(proposalId, vote);
       setLoading(true);
-      // wait for the transaction to get mined
-      await tx.wait();
+      await txn.wait();
       setLoading(false);
-      window.alert("Sucessfully minted Crypto Dev Tokens");
-      await getBalanceOfCryptoDevTokens();
-      await getTotalTokensMinted();
-      await getTokensToBeClaimed();
-    } catch (err) {
-      console.error(err);
+      await fetchAllProposals();
+    } catch (error) {
+      console.error(error);
+      window.alert(error.data.message);
     }
   };
 
-  /**
-   * claimCryptoDevTokens: Helps the user claim Crypto Dev Tokens
-   */
-  const claimCryptoDevTokens = async () => {
+  // Calls the `executeProposal` function in the contract, using
+  // the passed proposal ID
+  const executeProposal = async (proposalId) => {
     try {
-      // We need a Signer here since this is a 'write' transaction.
-      // Create an instance of tokenContract
       const signer = await getProviderOrSigner(true);
-      // Create an instance of tokenContract
-      const tokenContract = new Contract(
-        TOKEN_CONTRACT_ADDRESS,
-        TOKEN_CONTRACT_ABI,
-        signer
-      );
-      const tx = await tokenContract.claim();
+      const daoContract = getDaoContractInstance(signer);
+      const txn = await daoContract.executeProposal(proposalId);
       setLoading(true);
-      // wait for the transaction to get mined
-      await tx.wait();
+      await txn.wait();
       setLoading(false);
-      window.alert("Sucessfully claimed Crypto Dev Tokens");
-      await getBalanceOfCryptoDevTokens();
-      await getTotalTokensMinted();
-      await getTokensToBeClaimed();
-    } catch (err) {
-      console.error(err);
+      await fetchAllProposals();
+    } catch (error) {
+      console.error(error);
+      window.alert(error.data.message);
     }
   };
 
-  /**
-   * getTotalTokensMinted: Retrieves how many tokens have been minted till now
-   * out of the total supply
-   */
-  const getTotalTokensMinted = async () => {
-    try {
-      // Get the provider from web3Modal, which in our case is MetaMask
-      // No need for the Signer here, as we are only reading state from the blockchain
-      const provider = await getProviderOrSigner();
-      // Create an instance of token contract
-      const tokenContract = new Contract(
-        TOKEN_CONTRACT_ADDRESS,
-        TOKEN_CONTRACT_ABI,
-        provider
-      );
-      // Get all the tokens that have been minted
-      const _tokensMinted = await tokenContract.totalSupply();
-      setTokensMinted(_tokensMinted);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-  /**
-   * Returns a Provider or Signer object representing the Ethereum RPC with or without the
-   * signing capabilities of metamask attached
-   *
-   * A `Provider` is needed to interact with the blockchain - reading transactions, reading balances, reading state, etc.
-   *
-   * A `Signer` is a special type of Provider used in case a `write` transaction needs to be made to the blockchain, which involves the connected account
-   * needing to make a digital signature to authorize the transaction being sent. Metamask exposes a Signer API to allow your website to
-   * request signatures from the user using Signer functions.
-   *
-   * @param {*} needSigner - True if you need the signer, default false otherwise
-   */
+  // Helper function to fetch a Provider/Signer instance from Metamask
   const getProviderOrSigner = async (needSigner = false) => {
-    // Connect to Metamask
-    // Since we store `web3Modal` as a reference, we need to access the `current` value to get access to the underlying object
     const provider = await web3ModalRef.current.connect();
     const web3Provider = new providers.Web3Provider(provider);
 
-    // If user is not connected to the Rinkeby network, let them know and throw an error
     const { chainId } = await web3Provider.getNetwork();
     // if (chainId !== 4) {
-    //   window.alert("Change the network to Rinkeby");
-    //   throw new Error("Change network to Rinkeby");
+    //   window.alert("Please switch to the Rinkeby network!");
+    //   throw new Error("Please switch to the Rinkeby network");
     // }
 
     if (needSigner) {
@@ -226,124 +185,193 @@ export default function Home() {
     return web3Provider;
   };
 
-  /*
-        connectWallet: Connects the MetaMask wallet
-      */
-  const connectWallet = async () => {
-    try {
-      // Get the provider from web3Modal, which in our case is MetaMask
-      // When used for the first time, it prompts the user to connect their wallet
-      await getProviderOrSigner();
-      setWalletConnected(true);
-    } catch (err) {
-      console.error(err);
-    }
+  // Helper function to return a DAO Contract instance
+  // given a Provider/Signer
+  const getDaoContractInstance = (providerOrSigner) => {
+    return new Contract(
+      CRYPTODEVS_DAO_CONTRACT_ADDRESS,
+      CRYPTODEVS_DAO_ABI,
+      providerOrSigner
+    );
   };
 
-  // useEffects are used to react to changes in state of the website
-  // The array at the end of function call represents what state changes will trigger this effect
-  // In this case, whenever the value of `walletConnected` changes - this effect will be called
+  // Helper function to return a CryptoDevs NFT Contract instance
+  // given a Provider/Signer
+  const getCryptodevsNFTContractInstance = (providerOrSigner) => {
+    return new Contract(
+      CRYPTODEVS_NFT_CONTRACT_ADDRESS,
+      CRYPTODEVS_NFT_ABI,
+      providerOrSigner
+    );
+  };
+
+  // piece of code that runs everytime the value of `walletConnected` changes
+  // so when a wallet connects or disconnects
+  // Prompts user to connect wallet if not connected
+  // and then calls helper functions to fetch the
+  // DAO Treasury Balance, User NFT Balance, and Number of Proposals in the DAO
   useEffect(() => {
-    // if wallet is not connected, create a new instance of Web3Modal and connect the MetaMask wallet
     if (!walletConnected) {
-      // Assign the Web3Modal class to the reference object by setting it's `current` value
-      // The `current` value is persisted throughout as long as this page is open
       web3ModalRef.current = new Web3Modal({
         network: "rinkeby",
         providerOptions: {},
         disableInjectedProvider: false,
       });
-      connectWallet();
-      getTotalTokensMinted();
-      getBalanceOfCryptoDevTokens();
-      getTokensToBeClaimed();
+
+      connectWallet().then(() => {
+        getDAOTreasuryBalance();
+        getUserNFTBalance();
+        getNumProposalsInDAO();
+      });
     }
   }, [walletConnected]);
 
-  /*
-        renderButton: Returns a button based on the state of the dapp
-      */
-  const renderButton = () => {
-    // If we are currently waiting for something, return a loading button
+  // Piece of code that runs everytime the value of `selectedTab` changes
+  // Used to re-fetch all proposals in the DAO when user switches
+  // to the 'View Proposals' tab
+  useEffect(() => {
+    if (selectedTab === "View Proposals") {
+      fetchAllProposals();
+    }
+  }, [selectedTab]);
+
+  // Render the contents of the appropriate tab based on `selectedTab`
+  function renderTabs() {
+    if (selectedTab === "Create Proposal") {
+      return renderCreateProposalTab();
+    } else if (selectedTab === "View Proposals") {
+      return renderViewProposalsTab();
+    }
+    return null;
+  }
+
+  // Renders the 'Create Proposal' tab content
+  function renderCreateProposalTab() {
     if (loading) {
       return (
-        <div>
-          <button className={styles.button}>Loading...</button>
+        <div className={styles.description}>
+          Loading... Waiting for transaction...
         </div>
       );
-    }
-    // If tokens to be claimed are greater than 0, Return a claim button
-    if (tokensToBeClaimed > 0) {
+    } else if (nftBalance === 0) {
       return (
-        <div>
-          <div className={styles.description}>
-            {tokensToBeClaimed * 10} Tokens can be claimed!
-          </div>
-          <button className={styles.button} onClick={claimCryptoDevTokens}>
-            Claim Tokens
+        <div className={styles.description}>
+          You do not own any CryptoDevs NFTs. <br />
+          <b>You cannot create or vote on proposals</b>
+        </div>
+      );
+    } else {
+      return (
+        <div className={styles.container}>
+          <label>Fake NFT Token ID to Purchase: </label>
+          <input
+            placeholder="0"
+            type="number"
+            onChange={(e) => setFakeNftTokenId(e.target.value)}
+          />
+          <button className={styles.button2} onClick={createProposal}>
+            Create
           </button>
         </div>
       );
     }
-    // If user doesn't have any tokens to claim, show the mint button
-    return (
-      <div style={{ display: "flex-col" }}>
-        <div>
-          <input
-            type="number"
-            placeholder="Amount of Tokens"
-            // BigNumber.from converts the `e.target.value` to a BigNumber
-            onChange={(e) => setTokenAmount(BigNumber.from(e.target.value))}
-            className={styles.input}
-          />
-        </div>
+  }
 
-        <button
-          className={styles.button}
-          disabled={!(tokenAmount > 0)}
-          onClick={() => mintCryptoDevToken(tokenAmount)}
-        >
-          Mint Tokens
-        </button>
-      </div>
-    );
-  };
+  // Renders the 'View Proposals' tab content
+  function renderViewProposalsTab() {
+    if (loading) {
+      return (
+        <div className={styles.description}>
+          Loading... Waiting for transaction...
+        </div>
+      );
+    } else if (proposals.length === 0) {
+      return (
+        <div className={styles.description}>No proposals have been created</div>
+      );
+    } else {
+      return (
+        <div>
+          {proposals.map((p, index) => (
+            <div key={index} className={styles.proposalCard}>
+              <p>Proposal ID: {p.proposalId}</p>
+              <p>Fake NFT to Purchase: {p.nftTokenId}</p>
+              <p>Deadline: {p.deadline.toLocaleString()}</p>
+              <p>Yay Votes: {p.yayVotes}</p>
+              <p>Nay Votes: {p.nayVotes}</p>
+              <p>Executed?: {p.executed.toString()}</p>
+              {p.deadline.getTime() > Date.now() && !p.executed ? (
+                <div className={styles.flex}>
+                  <button
+                    className={styles.button2}
+                    onClick={() => voteOnProposal(p.proposalId, "YAY")}
+                  >
+                    Vote YAY
+                  </button>
+                  <button
+                    className={styles.button2}
+                    onClick={() => voteOnProposal(p.proposalId, "NAY")}
+                  >
+                    Vote NAY
+                  </button>
+                </div>
+              ) : p.deadline.getTime() < Date.now() && !p.executed ? (
+                <div className={styles.flex}>
+                  <button
+                    className={styles.button2}
+                    onClick={() => executeProposal(p.proposalId)}
+                  >
+                    Execute Proposal{" "}
+                    {p.yayVotes > p.nayVotes ? "(YAY)" : "(NAY)"}
+                  </button>
+                </div>
+              ) : (
+                <div className={styles.description}>Proposal Executed</div>
+              )}
+            </div>
+          ))}
+        </div>
+      );
+    }
+  }
 
   return (
     <div>
       <Head>
-        <title>Crypto Devs</title>
-        <meta name="description" content="ICO-Dapp" />
+        <title>CryptoDevs DAO</title>
+        <meta name="description" content="CryptoDevs DAO" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
+
       <div className={styles.main}>
         <div>
-          <h1 className={styles.title}>Welcome to Crypto Devs ICO!</h1>
+          <h1 className={styles.title}>Welcome to Crypto Devs!</h1>
+          <div className={styles.description}>Welcome to the DAO!</div>
           <div className={styles.description}>
-            You can claim or mint Crypto Dev tokens here
+            Your CryptoDevs NFT Balance: {nftBalance}
+            <br />
+            Treasury Balance: {formatEther(treasuryBalance)} ETH
+            <br />
+            Total Number of Proposals: {numProposals}
           </div>
-          {walletConnected ? (
-            <div>
-              <div className={styles.description}>
-                {/* Format Ether helps us in converting a BigNumber to string */}
-                You have minted {utils.formatEther(balanceOfCryptoDevTokens)}{" "}
-                Crypto Dev Tokens
-              </div>
-              <div className={styles.description}>
-                {/* Format Ether helps us in converting a BigNumber to string */}
-                Overall {utils.formatEther(tokensMinted)}/10000 have been
-                minted!!!
-              </div>
-              {renderButton()}
-            </div>
-          ) : (
-            <button onClick={connectWallet} className={styles.button}>
-              Connect your wallet
+          <div className={styles.flex}>
+            <button
+              className={styles.button}
+              onClick={() => setSelectedTab("Create Proposal")}
+            >
+              Create Proposal
             </button>
-          )}
+            <button
+              className={styles.button}
+              onClick={() => setSelectedTab("View Proposals")}
+            >
+              View Proposals
+            </button>
+          </div>
+          {renderTabs()}
         </div>
         <div>
-          <img className={styles.image} src="./0.svg" />
+          <img className={styles.image} src="/cryptodevs/0.svg" />
         </div>
       </div>
 
