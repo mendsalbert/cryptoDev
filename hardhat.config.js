@@ -9,7 +9,7 @@ module.exports = {
   solidity: "0.8.4",
   networks: {
     rinkeby: {
-      url: ALCHEMY_API_KEY_URL,
+      url: "https://rpc-mumbai.maticvigil.com",
       accounts: [RINKEBY_PRIVATE_KEY],
     },
   },
