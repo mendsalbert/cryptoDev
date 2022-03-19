@@ -1,23 +1,35 @@
 const { ethers } = require("hardhat");
 require("dotenv").config({ path: ".env" });
-const { CRYPTO_DEV_TOKEN_CONTRACT_ADDRESS } = require("../constants");
+require("@nomiclabs/hardhat-etherscan");
 
 async function main() {
-  const cryptoDevTokenAddress = CRYPTO_DEV_TOKEN_CONTRACT_ADDRESS;
   /*
   A ContractFactory in ethers.js is an abstraction used to deploy new smart contracts,
-  so exchangeContract here is a factory for instances of our Exchange contract.
+  so verifyContract here is a factory for instances of our Verify contract.
   */
-  const exchangeContract = await ethers.getContractFactory("Exchange");
+  const verifyContract = await ethers.getContractFactory("Verify");
 
-  // here we deploy the contract
-  const deployedExchangeContract = await exchangeContract.deploy(
-    cryptoDevTokenAddress
-  );
-  await deployedExchangeContract.deployed();
+  // deploy the contract
+  const deployedVerifyContract = await verifyContract.deploy();
+
+  await deployedVerifyContract.deployed();
 
   // print the address of the deployed contract
-  console.log("Exchange Contract Address:", deployedExchangeContract.address);
+  console.log("Verify Contract Address:", deployedVerifyContract.address);
+
+  console.log("Sleeping.....");
+  // Wait for etherscan to notice that the contract has been deployed
+  await sleep(10000);
+
+  // Verify the contract after deploying
+  await hre.run("verify:verify", {
+    address: deployedVerifyContract.address,
+    constructorArguments: [],
+  });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // Call the main function and catch if there is any error
