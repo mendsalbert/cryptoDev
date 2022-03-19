@@ -1,32 +1,26 @@
 const { ethers } = require("hardhat");
-const { CRYPTODEVS_NFT_CONTRACT_ADDRESS } = require("../constants");
+require("dotenv").config({ path: ".env" });
+const { CRYPTO_DEV_TOKEN_CONTRACT_ADDRESS } = require("../constants");
 
 async function main() {
-  // Deploy the FakeNFTMarketplace contract first
-  const FakeNFTMarketplace = await ethers.getContractFactory(
-    "FakeNFTMarketplace"
+  const cryptoDevTokenAddress = CRYPTO_DEV_TOKEN_CONTRACT_ADDRESS;
+  /*
+  A ContractFactory in ethers.js is an abstraction used to deploy new smart contracts,
+  so exchangeContract here is a factory for instances of our Exchange contract.
+  */
+  const exchangeContract = await ethers.getContractFactory("Exchange");
+
+  // here we deploy the contract
+  const deployedExchangeContract = await exchangeContract.deploy(
+    cryptoDevTokenAddress
   );
-  const fakeNftMarketplace = await FakeNFTMarketplace.deploy();
-  await fakeNftMarketplace.deployed();
+  await deployedExchangeContract.deployed();
 
-  console.log("FakeNFTMarketplace deployed to: ", fakeNftMarketplace.address);
-
-  // Now deploy the CryptoDevsDAO contract
-  const CryptoDevsDAO = await ethers.getContractFactory("CryptoDevsDAO");
-  const cryptoDevsDAO = await CryptoDevsDAO.deploy(
-    fakeNftMarketplace.address,
-    CRYPTODEVS_NFT_CONTRACT_ADDRESS,
-    {
-      // This assumes your account has at least 1 ETH in it's account
-      // Change this value as you want
-      value: ethers.utils.parseEther("1"),
-    }
-  );
-  await cryptoDevsDAO.deployed();
-
-  console.log("CryptoDevsDAO deployed to: ", cryptoDevsDAO.address);
+  // print the address of the deployed contract
+  console.log("Exchange Contract Address:", deployedExchangeContract.address);
 }
 
+// Call the main function and catch if there is any error
 main()
   .then(() => process.exit(0))
   .catch((error) => {
