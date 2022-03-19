@@ -1,4 +1,5 @@
-export const abi = "./artifacts/contracts/CryptoDevs.sol/CryptoDevs.json";
+// import '../../artifacts/contracts/CryptoDevs.sol/CryptoDevs.json'
+export const abi = "../artifacts/contracts/CryptoDevs.sol/CryptoDevs.json";
 
 // import '../../artifacts/contracts/CryptoDevs.sol/CryptoDevs.json'
 //   "../../../artifacts/contracts/CryptoDevs.sol/CryptoDevs.json";
