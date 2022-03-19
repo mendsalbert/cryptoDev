@@ -1,182 +1,296 @@
-import { Contract, providers } from "ethers";
-import { formatEther } from "ethers/lib/utils";
+import { BigNumber, providers, utils } from "ethers";
 import Head from "next/head";
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Web3Modal from "web3modal";
-import {
-  CRYPTODEVS_DAO_ABI,
-  CRYPTODEVS_DAO_CONTRACT_ADDRESS,
-  CRYPTODEVS_NFT_ABI,
-  CRYPTODEVS_NFT_CONTRACT_ADDRESS,
-} from "../constants";
 import styles from "../styles/Home.module.css";
+import { addLiquidity, calculateCD } from "../utils/addLiquidity";
+import {
+  getCDTokensBalance,
+  getEtherBalance,
+  getLPTokensBalance,
+  getReserveOfCDTokens,
+} from "../utils/getAmounts";
+import {
+  getTokensAfterRemove,
+  removeLiquidity,
+} from "../utils/removeLiquidity";
+import { swapTokens, getAmountOfTokensReceivedFromSwap } from "../utils/swap";
 
 export default function Home() {
-  // ETH Balance of the DAO contract
-  const [treasuryBalance, setTreasuryBalance] = useState("0");
-  // Number of proposals created in the DAO
-  const [numProposals, setNumProposals] = useState("0");
-  // Array of all proposals created in the DAO
-  const [proposals, setProposals] = useState([]);
-  // User's balance of CryptoDevs NFTs
-  const [nftBalance, setNftBalance] = useState(0);
-  // Fake NFT Token ID to purchase. Used when creating a proposal.
-  const [fakeNftTokenId, setFakeNftTokenId] = useState("");
-  // One of "Create Proposal" or "View Proposals"
-  const [selectedTab, setSelectedTab] = useState("");
-  // True if waiting for a transaction to be mined, false otherwise.
+  /** General state variables */
+  // loading is set to true when the transaction is mining and set to false when the transaction has mined
   const [loading, setLoading] = useState(false);
-  // True if user has connected their wallet, false otherwise
-  const [walletConnected, setWalletConnected] = useState(false);
+  // We have two tabs in this dapp, Liquidity Tab and Swap Tab. This variable keeps track of which Tab the user is on
+  // If it is set to true this means that the user is on `liquidity` tab else he is on `swap` tab
+  const [liquidityTab, setLiquidityTab] = useState(true);
+  // This variable is the `0` number in form of a BigNumber
+  const zero = BigNumber.from(0);
+  /** Variables to keep track of amount */
+  // `ethBalance` keeps track of the amount of Eth held by the user's account
+  const [ethBalance, setEtherBalance] = useState(zero);
+  // `reservedCD` keeps track of the Crypto Dev tokens Reserve balance in the Exchange contract
+  const [reservedCD, setReservedCD] = useState(zero);
+  // Keeps track of the ether balance in the contract
+  const [etherBalanceContract, setEtherBalanceContract] = useState(zero);
+  // cdBalance is the amount of `CD` tokens help by the users account
+  const [cdBalance, setCDBalance] = useState(zero);
+  // `lpBalance` is the amount of LP tokens held by the users account
+  const [lpBalance, setLPBalance] = useState(zero);
+  /** Variables to keep track of liquidity to be added or removed */
+  // addEther is the amount of Ether that the user wants to add to the liquidity
+  const [addEther, setAddEther] = useState(zero);
+  // addCDTokens keeps track of the amount of CD tokens that the user wants to add to the liquidity
+  // in case when there is no initial liquidity and after liquidity gets added it keeps track of the
+  // CD tokens that the user can add given a certain amount of ether
+  const [addCDTokens, setAddCDTokens] = useState(zero);
+  // removeEther is the amount of `Ether` that would be sent back to the user based on a certain number of `LP` tokens
+  const [removeEther, setRemoveEther] = useState(zero);
+  // removeCD is the amount of `Crypto Dev` tokens that would be sent back to the user base on a certain number of `LP` tokens
+  // that he wants to withdraw
+  const [removeCD, setRemoveCD] = useState(zero);
+  // amount of LP tokens that the user wants to remove from liquidity
+  const [removeLPTokens, setRemoveLPTokens] = useState("0");
+  /** Variables to keep track of swap functionality */
+  // Amount that the user wants to swap
+  const [swapAmount, setSwapAmount] = useState("");
+  // This keeps track of the number of tokens that the user would recieve after a swap completes
+  const [tokenToBeRecievedAfterSwap, setTokenToBeRecievedAfterSwap] =
+    useState(zero);
+  // Keeps track of whether  `Eth` or `Crypto Dev` token is selected. If `Eth` is selected it means that the user
+  // wants to swap some `Eth` for some `Crypto Dev` tokens and vice versa if `Eth` is not selected
+  const [ethSelected, setEthSelected] = useState(true);
+  /** Wallet connection */
+  // Create a reference to the Web3 Modal (used for connecting to Metamask) which persists as long as the page is open
   const web3ModalRef = useRef();
+  // walletConnected keep track of whether the user's wallet is connected or not
+  const [walletConnected, setWalletConnected] = useState(false);
 
-  // Helper function to connect wallet
+  /**
+   * getAmounts call various functions to retrive amounts for ethbalance,
+   * LP tokens etc
+   */
+  const getAmounts = async () => {
+    try {
+      const provider = await getProviderOrSigner(false);
+      const signer = await getProviderOrSigner(true);
+      const address = await signer.getAddress();
+      // get the amount of eth in the user's account
+      const _ethBalance = await getEtherBalance(provider, address);
+      // get the amount of `Crypto Dev` tokens held by the user
+      const _cdBalance = await getCDTokensBalance(provider, address);
+      // get the amount of `Crypto Dev` LP tokens held by the user
+      const _lpBalance = await getLPTokensBalance(provider, address);
+      // gets the amount of `CD` tokens that are present in the reserve of the `Exchange contract`
+      const _reservedCD = await getReserveOfCDTokens(provider);
+      // Get the ether reserves in the contract
+      const _ethBalanceContract = await getEtherBalance(provider, null, true);
+      setEtherBalance(_ethBalance);
+      setCDBalance(_cdBalance);
+      setLPBalance(_lpBalance);
+      setReservedCD(_reservedCD);
+      setReservedCD(_reservedCD);
+      setEtherBalanceContract(_ethBalanceContract);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  /**** SWAP FUNCTIONS ****/
+
+  /*
+  swapTokens: Swaps  `swapAmountWei` of Eth/Crypto Dev tokens with `tokenToBeRecievedAfterSwap` amount of Eth/Crypto Dev tokens.
+*/
+  const _swapTokens = async () => {
+    try {
+      // Convert the amount entered by the user to a BigNumber using the `parseEther` library from `ethers.js`
+      const swapAmountWei = utils.parseEther(swapAmount);
+      // Check if the user entered zero
+      // We are here using the `eq` method from BigNumber class in `ethers.js`
+      if (!swapAmountWei.eq(zero)) {
+        const signer = await getProviderOrSigner(true);
+        setLoading(true);
+        // Call the swapTokens function from the `utils` folder
+        await swapTokens(
+          signer,
+          swapAmountWei,
+          tokenToBeRecievedAfterSwap,
+          ethSelected
+        );
+        setLoading(false);
+        // Get all the updated amounts after the swap
+        await getAmounts();
+        setSwapAmount("");
+      }
+    } catch (err) {
+      console.error(err);
+      setLoading(false);
+      setSwapAmount("");
+    }
+  };
+
+  /*
+    _getAmountOfTokensReceivedFromSwap:  Returns the number of Eth/Crypto Dev tokens that can be recieved 
+    when the user swaps `_swapAmountWEI` amount of Eth/Crypto Dev tokens.
+ */
+  const _getAmountOfTokensReceivedFromSwap = async (_swapAmount) => {
+    try {
+      // Convert the amount entered by the user to a BigNumber using the `parseEther` library from `ethers.js`
+      const _swapAmountWEI = utils.parseEther(_swapAmount.toString());
+      // Check if the user entered zero
+      // We are here using the `eq` method from BigNumber class in `ethers.js`
+      if (!_swapAmountWEI.eq(zero)) {
+        const provider = await getProviderOrSigner();
+        // Get the amount of ether in the contract
+        const _ethBalance = await getEtherBalance(provider, null, true);
+        // Call the `getAmountOfTokensReceivedFromSwap` from the utils folder
+        const amountOfTokens = await getAmountOfTokensReceivedFromSwap(
+          _swapAmountWEI,
+          provider,
+          ethSelected,
+          _ethBalance,
+          reservedCD
+        );
+        setTokenToBeRecievedAfterSwap(amountOfTokens);
+      } else {
+        setTokenToBeRecievedAfterSwap(zero);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  /*** END ***/
+
+  /**** ADD LIQUIDITY FUNCTIONS ****/
+
+  /**
+   * _addLiquidity helps add liquidity to the exchange,
+   * If the user is adding initial liquidity, user decides the ether and CD tokens he wants to add
+   * to the exchange. If we he adding the liquidity after the initial liquidity has already been added
+   * then we calculate the crypto dev tokens he can add, given the eth he wants to add by keeping the ratios
+   * constant
+   */
+  const _addLiquidity = async () => {
+    try {
+      // Convert the ether amount entered by the user to Bignumber
+      const addEtherWei = utils.parseEther(addEther.toString());
+      // Check if the values are zero
+      if (!addCDTokens.eq(zero) && !addEtherWei.eq(zero)) {
+        const signer = await getProviderOrSigner(true);
+        setLoading(true);
+        // call the addLiquidity function from the utils folder
+        await addLiquidity(signer, addCDTokens, addEtherWei);
+        setLoading(false);
+        // Reinitialize the CD tokens
+        setAddCDTokens(zero);
+        // Get amounts for all values after the liquidity has been added
+        await getAmounts();
+      } else {
+        setAddCDTokens(zero);
+      }
+    } catch (err) {
+      console.error(err);
+      setLoading(false);
+      setAddCDTokens(zero);
+    }
+  };
+
+  /**** END ****/
+
+  /**** REMOVE LIQUIDITY FUNCTIONS ****/
+
+  /**
+   * _removeLiquidity: Removes the `removeLPTokensWei` amount of LP tokens from
+   * liquidity and also the calculated amount of `ether` and `CD` tokens
+   */
+  const _removeLiquidity = async () => {
+    try {
+      const signer = await getProviderOrSigner(true);
+      // Convert the LP tokens entered by the user to a BigNumber
+      const removeLPTokensWei = utils.parseEther(removeLPTokens);
+      setLoading(true);
+      // Call the removeLiquidity function from the `utils` folder
+      await removeLiquidity(signer, removeLPTokensWei);
+      setLoading(false);
+      await getAmounts();
+      setRemoveCD(zero);
+      setRemoveEther(zero);
+    } catch (err) {
+      console.error(err);
+      setLoading(false);
+      setRemoveCD(zero);
+      setRemoveEther(zero);
+    }
+  };
+
+  /**
+   * _getTokensAfterRemove: Calculates the amount of `Ether` and `CD` tokens
+   * that would be returned back to user after he removes `removeLPTokenWei` amount
+   * of LP tokens from the contract
+   */
+  const _getTokensAfterRemove = async (_removeLPTokens) => {
+    try {
+      const provider = await getProviderOrSigner();
+      // Convert the LP tokens entered by the user to a BigNumber
+      const removeLPTokenWei = utils.parseEther(_removeLPTokens);
+      // Get the Eth reserves within the exchange contract
+      const _ethBalance = await getEtherBalance(provider, null, true);
+      // get the crypto dev token reserves from the contract
+      const cryptoDevTokenReserve = await getReserveOfCDTokens(provider);
+      // call the getTokensAfterRemove from the utils folder
+      const { _removeEther, _removeCD } = await getTokensAfterRemove(
+        provider,
+        removeLPTokenWei,
+        _ethBalance,
+        cryptoDevTokenReserve
+      );
+      setRemoveEther(_removeEther);
+      setRemoveCD(_removeCD);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  /**** END ****/
+
+  /*
+      connectWallet: Connects the MetaMask wallet
+  */
   const connectWallet = async () => {
     try {
+      // Get the provider from web3Modal, which in our case is MetaMask
+      // When used for the first time, it prompts the user to connect their wallet
       await getProviderOrSigner();
       setWalletConnected(true);
-    } catch (error) {
-      console.error(error);
+    } catch (err) {
+      console.error(err);
     }
   };
 
-  // Reads the ETH balance of the DAO contract and sets the `treasuryBalance` state variable
-  const getDAOTreasuryBalance = async () => {
-    try {
-      const provider = await getProviderOrSigner();
-      const balance = await provider.getBalance(
-        CRYPTODEVS_DAO_CONTRACT_ADDRESS
-      );
-      setTreasuryBalance(balance.toString());
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  // Reads the number of proposals in the DAO contract and sets the `numProposals` state variable
-  const getNumProposalsInDAO = async () => {
-    try {
-      const provider = await getProviderOrSigner();
-      const contract = getDaoContractInstance(provider);
-      const daoNumProposals = await contract.numProposals();
-      setNumProposals(daoNumProposals.toString());
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  // Reads the balance of the user's CryptoDevs NFTs and sets the `nftBalance` state variable
-  const getUserNFTBalance = async () => {
-    try {
-      const signer = await getProviderOrSigner(true);
-      const nftContract = getCryptodevsNFTContractInstance(signer);
-      const balance = await nftContract.balanceOf(signer.getAddress());
-      setNftBalance(parseInt(balance.toString()));
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  // Calls the `createProposal` function in the contract, using the tokenId from `fakeNftTokenId`
-  const createProposal = async () => {
-    try {
-      const signer = await getProviderOrSigner(true);
-      const daoContract = getDaoContractInstance(signer);
-      const txn = await daoContract.createProposal(fakeNftTokenId);
-      setLoading(true);
-      await txn.wait();
-      await getNumProposalsInDAO();
-      setLoading(false);
-    } catch (error) {
-      console.error(error);
-      window.alert(error.data.message);
-    }
-  };
-
-  // Helper function to fetch and parse one proposal from the DAO contract
-  // Given the Proposal ID
-  // and converts the returned data into a Javascript object with values we can use
-  const fetchProposalById = async (id) => {
-    try {
-      const provider = await getProviderOrSigner();
-      const daoContract = getDaoContractInstance(provider);
-      const proposal = await daoContract.proposals(id);
-      const parsedProposal = {
-        proposalId: id,
-        nftTokenId: proposal.nftTokenId.toString(),
-        deadline: new Date(parseInt(proposal.deadline.toString()) * 1000),
-        yayVotes: proposal.yayVotes.toString(),
-        nayVotes: proposal.nayVotes.toString(),
-        executed: proposal.executed,
-      };
-      return parsedProposal;
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  // Runs a loop `numProposals` times to fetch all proposals in the DAO
-  // and sets the `proposals` state variable
-  const fetchAllProposals = async () => {
-    try {
-      const proposals = [];
-      for (let i = 0; i < numProposals; i++) {
-        const proposal = await fetchProposalById(i);
-        proposals.push(proposal);
-      }
-      setProposals(proposals);
-      return proposals;
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  // Calls the `voteOnProposal` function in the contract, using the passed
-  // proposal ID and Vote
-  const voteOnProposal = async (proposalId, _vote) => {
-    try {
-      const signer = await getProviderOrSigner(true);
-      const daoContract = getDaoContractInstance(signer);
-
-      let vote = _vote === "YAY" ? 0 : 1;
-      const txn = await daoContract.voteOnProposal(proposalId, vote);
-      setLoading(true);
-      await txn.wait();
-      setLoading(false);
-      await fetchAllProposals();
-    } catch (error) {
-      console.error(error);
-      window.alert(error.data.message);
-    }
-  };
-
-  // Calls the `executeProposal` function in the contract, using
-  // the passed proposal ID
-  const executeProposal = async (proposalId) => {
-    try {
-      const signer = await getProviderOrSigner(true);
-      const daoContract = getDaoContractInstance(signer);
-      const txn = await daoContract.executeProposal(proposalId);
-      setLoading(true);
-      await txn.wait();
-      setLoading(false);
-      await fetchAllProposals();
-    } catch (error) {
-      console.error(error);
-      window.alert(error.data.message);
-    }
-  };
-
-  // Helper function to fetch a Provider/Signer instance from Metamask
+  /**
+   * Returns a Provider or Signer object representing the Ethereum RPC with or without the
+   * signing capabilities of metamask attached
+   *
+   * A `Provider` is needed to interact with the blockchain - reading transactions, reading balances, reading state, etc.
+   *
+   * A `Signer` is a special type of Provider used in case a `write` transaction needs to be made to the blockchain, which involves the connected account
+   * needing to make a digital signature to authorize the transaction being sent. Metamask exposes a Signer API to allow your website to
+   * request signatures from the user using Signer functions.
+   *
+   * @param {*} needSigner - True if you need the signer, default false otherwise
+   */
   const getProviderOrSigner = async (needSigner = false) => {
+    // Connect to Metamask
+    // Since we store `web3Modal` as a reference, we need to access the `current` value to get access to the underlying object
     const provider = await web3ModalRef.current.connect();
     const web3Provider = new providers.Web3Provider(provider);
 
+    // If user is not connected to the Rinkeby network, let them know and throw an error
     const { chainId } = await web3Provider.getNetwork();
-    // if (chainId !== 4) {
-    //   window.alert("Please switch to the Rinkeby network!");
-    //   throw new Error("Please switch to the Rinkeby network");
-    // }
+    if (chainId !== 4) {
+      window.alert("Change the network to Rinkeby");
+      throw new Error("Change network to Rinkeby");
+    }
 
     if (needSigner) {
       const signer = web3Provider.getSigner();
@@ -185,193 +299,215 @@ export default function Home() {
     return web3Provider;
   };
 
-  // Helper function to return a DAO Contract instance
-  // given a Provider/Signer
-  const getDaoContractInstance = (providerOrSigner) => {
-    return new Contract(
-      CRYPTODEVS_DAO_CONTRACT_ADDRESS,
-      CRYPTODEVS_DAO_ABI,
-      providerOrSigner
-    );
-  };
-
-  // Helper function to return a CryptoDevs NFT Contract instance
-  // given a Provider/Signer
-  const getCryptodevsNFTContractInstance = (providerOrSigner) => {
-    return new Contract(
-      CRYPTODEVS_NFT_CONTRACT_ADDRESS,
-      CRYPTODEVS_NFT_ABI,
-      providerOrSigner
-    );
-  };
-
-  // piece of code that runs everytime the value of `walletConnected` changes
-  // so when a wallet connects or disconnects
-  // Prompts user to connect wallet if not connected
-  // and then calls helper functions to fetch the
-  // DAO Treasury Balance, User NFT Balance, and Number of Proposals in the DAO
+  // useEffects are used to react to changes in state of the website
+  // The array at the end of function call represents what state changes will trigger this effect
+  // In this case, whenever the value of `walletConnected` changes - this effect will be called
   useEffect(() => {
+    // if wallet is not connected, create a new instance of Web3Modal and connect the MetaMask wallet
     if (!walletConnected) {
+      // Assign the Web3Modal class to the reference object by setting it's `current` value
+      // The `current` value is persisted throughout as long as this page is open
       web3ModalRef.current = new Web3Modal({
         network: "rinkeby",
         providerOptions: {},
         disableInjectedProvider: false,
       });
-
-      connectWallet().then(() => {
-        getDAOTreasuryBalance();
-        getUserNFTBalance();
-        getNumProposalsInDAO();
-      });
+      connectWallet();
+      getAmounts();
     }
   }, [walletConnected]);
 
-  // Piece of code that runs everytime the value of `selectedTab` changes
-  // Used to re-fetch all proposals in the DAO when user switches
-  // to the 'View Proposals' tab
-  useEffect(() => {
-    if (selectedTab === "View Proposals") {
-      fetchAllProposals();
-    }
-  }, [selectedTab]);
-
-  // Render the contents of the appropriate tab based on `selectedTab`
-  function renderTabs() {
-    if (selectedTab === "Create Proposal") {
-      return renderCreateProposalTab();
-    } else if (selectedTab === "View Proposals") {
-      return renderViewProposalsTab();
-    }
-    return null;
-  }
-
-  // Renders the 'Create Proposal' tab content
-  function renderCreateProposalTab() {
-    if (loading) {
+  /*
+      renderButton: Returns a button based on the state of the dapp
+  */
+  const renderButton = () => {
+    // If wallet is not connected, return a button which allows them to connect their wllet
+    if (!walletConnected) {
       return (
-        <div className={styles.description}>
-          Loading... Waiting for transaction...
-        </div>
+        <button onClick={connectWallet} className={styles.button}>
+          Connect your wallet
+        </button>
       );
-    } else if (nftBalance === 0) {
+    }
+
+    // If we are currently waiting for something, return a loading button
+    if (loading) {
+      return <button className={styles.button}>Loading...</button>;
+    }
+
+    if (liquidityTab) {
       return (
-        <div className={styles.description}>
-          You do not own any CryptoDevs NFTs. <br />
-          <b>You cannot create or vote on proposals</b>
+        <div>
+          <div className={styles.description}>
+            You have:
+            <br />
+            {/* Convert the BigNumber to string using the formatEther function from ethers.js */}
+            {utils.formatEther(cdBalance)} Crypto Dev Tokens
+            <br />
+            {utils.formatEther(ethBalance)} Ether
+            <br />
+            {utils.formatEther(lpBalance)} Crypto Dev LP tokens
+          </div>
+          <div>
+            {/* If reserved CD is zero, render the state for liquidity zero where we ask the user
+            who much initial liquidity he wants to add else just render the state where liquidity is not zero and
+            we calculate based on the `Eth` amount specified by the user how much `CD` tokens can be added */}
+            {utils.parseEther(reservedCD.toString()).eq(zero) ? (
+              <div>
+                <input
+                  type="number"
+                  placeholder="Amount of Ether"
+                  onChange={(e) => setAddEther(e.target.value || "0")}
+                  className={styles.input}
+                />
+                <input
+                  type="number"
+                  placeholder="Amount of CryptoDev tokens"
+                  onChange={(e) =>
+                    setAddCDTokens(
+                      BigNumber.from(utils.parseEther(e.target.value || "0"))
+                    )
+                  }
+                  className={styles.input}
+                />
+                <button className={styles.button1} onClick={_addLiquidity}>
+                  Add
+                </button>
+              </div>
+            ) : (
+              <div>
+                <input
+                  type="number"
+                  placeholder="Amount of Ether"
+                  onChange={async (e) => {
+                    setAddEther(e.target.value || "0");
+                    // calculate the number of CD tokens that
+                    // can be added given  `e.target.value` amount of Eth
+                    const _addCDTokens = await calculateCD(
+                      e.target.value || "0",
+                      etherBalanceContract,
+                      reservedCD
+                    );
+                    setAddCDTokens(_addCDTokens);
+                  }}
+                  className={styles.input}
+                />
+                <div className={styles.inputDiv}>
+                  {/* Convert the BigNumber to string using the formatEther function from ethers.js */}
+                  {`You will need ${utils.formatEther(addCDTokens)} Crypto Dev
+                  Tokens`}
+                </div>
+                <button className={styles.button1} onClick={_addLiquidity}>
+                  Add
+                </button>
+              </div>
+            )}
+            <div>
+              <input
+                type="number"
+                placeholder="Amount of LP Tokens"
+                onChange={async (e) => {
+                  setRemoveLPTokens(e.target.value || "0");
+                  // Calculate the amount of Ether and CD tokens that the user would recieve
+                  // After he removes `e.target.value` amount of `LP` tokens
+                  await _getTokensAfterRemove(e.target.value || "0");
+                }}
+                className={styles.input}
+              />
+              <div className={styles.inputDiv}>
+                {/* Convert the BigNumber to string using the formatEther function from ethers.js */}
+                {`You will get ${utils.formatEther(removeCD)} Crypto
+              Dev Tokens and ${utils.formatEther(removeEther)} Eth`}
+              </div>
+              <button className={styles.button1} onClick={_removeLiquidity}>
+                Remove
+              </button>
+            </div>
+          </div>
         </div>
       );
     } else {
       return (
-        <div className={styles.container}>
-          <label>Fake NFT Token ID to Purchase: </label>
+        <div>
           <input
-            placeholder="0"
             type="number"
-            onChange={(e) => setFakeNftTokenId(e.target.value)}
+            placeholder="Amount"
+            onChange={async (e) => {
+              setSwapAmount(e.target.value || "");
+              // Calculate the amount of tokens user would recieve after the swap
+              await _getAmountOfTokensReceivedFromSwap(e.target.value || "0");
+            }}
+            className={styles.input}
+            value={swapAmount}
           />
-          <button className={styles.button2} onClick={createProposal}>
-            Create
+          <select
+            className={styles.select}
+            name="dropdown"
+            id="dropdown"
+            onChange={async () => {
+              setEthSelected(!ethSelected);
+              // Initialize the values back to zero
+              await _getAmountOfTokensReceivedFromSwap(0);
+              setSwapAmount("");
+            }}
+          >
+            <option value="eth">Ethereum</option>
+            <option value="cryptoDevToken">Crypto Dev Token</option>
+          </select>
+          <br />
+          <div className={styles.inputDiv}>
+            {/* Convert the BigNumber to string using the formatEther function from ethers.js */}
+            {ethSelected
+              ? `You will get ${utils.formatEther(
+                  tokenToBeRecievedAfterSwap
+                )} Crypto Dev Tokens`
+              : `You will get ${utils.formatEther(
+                  tokenToBeRecievedAfterSwap
+                )} Eth`}
+          </div>
+          <button className={styles.button1} onClick={_swapTokens}>
+            Swap
           </button>
         </div>
       );
     }
-  }
-
-  // Renders the 'View Proposals' tab content
-  function renderViewProposalsTab() {
-    if (loading) {
-      return (
-        <div className={styles.description}>
-          Loading... Waiting for transaction...
-        </div>
-      );
-    } else if (proposals.length === 0) {
-      return (
-        <div className={styles.description}>No proposals have been created</div>
-      );
-    } else {
-      return (
-        <div>
-          {proposals.map((p, index) => (
-            <div key={index} className={styles.proposalCard}>
-              <p>Proposal ID: {p.proposalId}</p>
-              <p>Fake NFT to Purchase: {p.nftTokenId}</p>
-              <p>Deadline: {p.deadline.toLocaleString()}</p>
-              <p>Yay Votes: {p.yayVotes}</p>
-              <p>Nay Votes: {p.nayVotes}</p>
-              <p>Executed?: {p.executed.toString()}</p>
-              {p.deadline.getTime() > Date.now() && !p.executed ? (
-                <div className={styles.flex}>
-                  <button
-                    className={styles.button2}
-                    onClick={() => voteOnProposal(p.proposalId, "YAY")}
-                  >
-                    Vote YAY
-                  </button>
-                  <button
-                    className={styles.button2}
-                    onClick={() => voteOnProposal(p.proposalId, "NAY")}
-                  >
-                    Vote NAY
-                  </button>
-                </div>
-              ) : p.deadline.getTime() < Date.now() && !p.executed ? (
-                <div className={styles.flex}>
-                  <button
-                    className={styles.button2}
-                    onClick={() => executeProposal(p.proposalId)}
-                  >
-                    Execute Proposal{" "}
-                    {p.yayVotes > p.nayVotes ? "(YAY)" : "(NAY)"}
-                  </button>
-                </div>
-              ) : (
-                <div className={styles.description}>Proposal Executed</div>
-              )}
-            </div>
-          ))}
-        </div>
-      );
-    }
-  }
+  };
 
   return (
     <div>
       <Head>
-        <title>CryptoDevs DAO</title>
-        <meta name="description" content="CryptoDevs DAO" />
+        <title>Crypto Devs</title>
+        <meta name="description" content="Exchange-Dapp" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
-
       <div className={styles.main}>
         <div>
-          <h1 className={styles.title}>Welcome to Crypto Devs!</h1>
-          <div className={styles.description}>Welcome to the DAO!</div>
+          <h1 className={styles.title}>Welcome to Crypto Devs Exchange!</h1>
           <div className={styles.description}>
-            Your CryptoDevs NFT Balance: {nftBalance}
-            <br />
-            Treasury Balance: {formatEther(treasuryBalance)} ETH
-            <br />
-            Total Number of Proposals: {numProposals}
+            Exchange Ethereum &#60;&#62; Crypto Dev Tokens
           </div>
-          <div className={styles.flex}>
+          <div>
             <button
               className={styles.button}
-              onClick={() => setSelectedTab("Create Proposal")}
+              onClick={() => {
+                setLiquidityTab(!liquidityTab);
+              }}
             >
-              Create Proposal
+              Liquidity
             </button>
             <button
               className={styles.button}
-              onClick={() => setSelectedTab("View Proposals")}
+              onClick={() => {
+                setLiquidityTab(false);
+              }}
             >
-              View Proposals
+              Swap
             </button>
           </div>
-          {renderTabs()}
+          {renderButton()}
         </div>
         <div>
-          <img className={styles.image} src="/cryptodevs/0.svg" />
+          <img className={styles.image} src="./cryptodev.svg" />
         </div>
       </div>
 
