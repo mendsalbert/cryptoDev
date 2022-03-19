@@ -37,6 +37,8 @@ export default function Home() {
         // We are parsing `0.01` string to ether using the utils library from ethers.js
         value: utils.parseEther("0.01"),
       });
+
+      console.log(whitelistContract);
       setLoading(true);
       // wait for the transaction to get mined
       await tx.wait();
@@ -123,7 +125,9 @@ export default function Home() {
       // have read-only access to the Contract
       const nftContract = new Contract(NFT_CONTRACT_ADDRESS, abi, provider);
       // call the presaleStarted from the contract
+
       const _presaleStarted = await nftContract.presaleStarted();
+      console.log(_presaleStarted);
       if (!_presaleStarted) {
         await getOwner();
       }
