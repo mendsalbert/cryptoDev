@@ -2,10 +2,13 @@ import { Contract, providers, utils } from "ethers";
 import Head from "next/head";
 import React, { useEffect, useRef, useState } from "react";
 import Web3Modal from "web3modal";
-import { abi, NFT_CONTRACT_ADDRESS } from "../constants";
+// import { abi, NFT_CONTRACT_ADDRESS } from "../constants";
+
 import styles from "../styles/Home.module.css";
 
 export default function Home() {
+  const abi = `../../artifacts/contracts/CryptoDevs.sol/CryptoDevs.json`;
+  const NFT_CONTRACT_ADDRESS = "0x7Aa4a7D2b7ea1B113656B6c0755bb5030BB75896";
   // walletConnected keep track of whether the user's wallet is connected or not
   const [walletConnected, setWalletConnected] = useState(false);
   // presaleStarted keeps track of whether the presale has started or not
