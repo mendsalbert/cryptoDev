@@ -62,4 +62,22 @@ contract RandomWinnerGame is VRFConsumerBase, Ownable {
     gameId += 1;
     emit GameStarted(gameId, maxPlayers, entryFee);
 }
+
+
+ */
+function joinGame() public payable {
+    // Check if a game is already running
+    require(gameStarted, "Game has not been started yet");
+    // Check if the value sent by the user matches the entryFee
+    require(msg.value == entryFee, "Value sent is not equal to entryFee");
+    // Check if there is still some space left in the game to add another player
+    require(players.length < maxPlayers, "Game is full");
+    // add the sender to the players list
+    players.push(msg.sender);
+    emit PlayerJoined(gameId, msg.sender);
+    // If the list is full start the winner selection process
+    if(players.length == maxPlayers) {
+        getRandomWinner();
+    }
+}
 }
