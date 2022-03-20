@@ -1,29 +1,46 @@
-// We require the Hardhat Runtime Environment explicitly here. This is optional
-// but useful for running the script in a standalone fashion through `node <script>`.
-//
-// When running the script with `npx hardhat run <script>` you'll find the Hardhat
-// Runtime Environment's members available in the global scope.
-const hre = require("hardhat");
+const { ethers } = require("hardhat");
+require("dotenv").config({ path: ".env" });
+require("@nomiclabs/hardhat-etherscan");
+const { FEE, VRF_COORDINATOR, LINK_TOKEN, KEY_HASH } = require("../constants");
 
 async function main() {
-  // Hardhat always runs the compile task when running scripts with its command
-  // line interface.
-  //
-  // If this script is run directly using `node` you may want to call compile
-  // manually to make sure everything is compiled
-  // await hre.run('compile');
+  /*
+ A ContractFactory in ethers.js is an abstraction used to deploy new smart contracts,
+ so randomWinnerGame here is a factory for instances of our RandomWinnerGame contract.
+ */
+  const randomWinnerGame = await ethers.getContractFactory("RandomWinnerGame");
+  // deploy the contract
+  const deployedRandomWinnerGameContract = await randomWinnerGame.deploy(
+    VRF_COORDINATOR,
+    LINK_TOKEN,
+    KEY_HASH,
+    FEE
+  );
 
-  // We get the contract to deploy
-  const Greeter = await hre.ethers.getContractFactory("Greeter");
-  const greeter = await Greeter.deploy("Hello, Hardhat!");
+  await deployedRandomWinnerGameContract.deployed();
 
-  await greeter.deployed();
+  // print the address of the deployed contract
+  console.log(
+    "Verify Contract Address:",
+    deployedRandomWinnerGameContract.address
+  );
 
-  console.log("Greeter deployed to:", greeter.address);
+  console.log("Sleeping.....");
+  // Wait for etherscan to notice that the contract has been deployed
+  await sleep(30000);
+
+  // Verify the contract after deploying
+  await hre.run("verify:verify", {
+    address: deployedRandomWinnerGameContract.address,
+    constructorArguments: [VRF_COORDINATOR, LINK_TOKEN, KEY_HASH, FEE],
+  });
 }
 
-// We recommend this pattern to be able to use async/await everywhere
-// and properly handle errors.
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Call the main function and catch if there is any error
 main()
   .then(() => process.exit(0))
   .catch((error) => {
