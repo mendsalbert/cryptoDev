@@ -64,7 +64,7 @@ contract RandomWinnerGame is VRFConsumerBase, Ownable {
 }
 
 
- */
+
 function joinGame() public payable {
     // Check if a game is already running
     require(gameStarted, "Game has not been started yet");
@@ -79,5 +79,17 @@ function joinGame() public payable {
     if(players.length == maxPlayers) {
         getRandomWinner();
     }
+}
+
+
+function getRandomWinner() private returns (bytes32 requestId) {
+    // LINK is an internal interface for Link token found within the VRFConsumerBase
+    // Here we use the balanceOF method from that interface to make sure that our
+    // contract has enough link so that we can request the VRFCoordinator for randomness
+    require(LINK.balanceOf(address(this)) >= fee, "Not enough LINK");
+    // Make a request to the VRF coordinator.
+    // requestRandomness is a function within the VRFConsumerBase
+    // it starts the process of randomness generation
+    return requestRandomness(keyHash, fee);
 }
 }
