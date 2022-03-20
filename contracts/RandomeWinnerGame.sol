@@ -46,5 +46,20 @@ contract RandomWinnerGame is VRFConsumerBase, Ownable {
         fee = vrfFee;
         gameStarted = false;
     }
-    
+
+
+    function startGame(uint8 _maxPlayers, uint256 _entryFee) public onlyOwner {
+    // Check if there is a game already running
+    require(!gameStarted, "Game is currently running");
+    // empty the players array
+    delete players;
+    // set the max players for this game
+    maxPlayers = _maxPlayers;
+    // set the game started to true
+    gameStarted = true;
+    // setup the entryFee for the game
+    entryFee = _entryFee;
+    gameId += 1;
+    emit GameStarted(gameId, maxPlayers, entryFee);
+}
 }
