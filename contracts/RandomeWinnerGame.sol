@@ -92,4 +92,19 @@ function getRandomWinner() private returns (bytes32 requestId) {
     // it starts the process of randomness generation
     return requestRandomness(keyHash, fee);
 }
+
+ function fulfillRandomness(bytes32 requestId, uint256 randomness) internal virtual override  {
+        // We want out winnerIndex to be in the length from 0 to players.length-1
+        // For this we mod it with the player.length value
+        uint256 winnerIndex = randomness % players.length;
+        // get the address of the winner from the players array
+        address winner = players[winnerIndex];
+        // send the ether in the contract to the winner
+        (bool sent,) = winner.call{value: address(this).balance}("");
+        require(sent, "Failed to send Ether");
+        // Emit that the game has ended
+        emit GameEnded(gameId, winner,requestId);
+        // set the gameStarted variable to false
+        gameStarted = false;
+    }
 }
